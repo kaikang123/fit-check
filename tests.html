@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fit Check — tests</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    #summary { font-size: 1.1rem; font-weight: 700; margin-bottom: 14px; }
+    .t { padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 0.84rem; display: flex; gap: 10px; }
+    .t:last-child { border-bottom: none; }
+    .t-mark { flex-shrink: 0; font-weight: 700; }
+    .t-pass .t-mark { color: var(--green); }
+    .t-fail .t-mark { color: var(--red); }
+    .t-err { color: var(--red); font-size: 0.78rem; display: block; margin-top: 3px; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header id="topbar"><span class="logo">Fit&nbsp;Check tests</span></header>
+    <main id="screen">
+      <div class="card">
+        <div id="summary">Running…</div>
+        <div id="list"></div>
+      </div>
+    </main>
+  </div>
+  <script type="module">
+    import './js/tests.js';
+    const { results, passed, failed, total } = window.FIT_CHECK_RESULTS;
+    document.getElementById('summary').textContent =
+      failed === 0 ? `All ${total} tests passed` : `${passed}/${total} passed — ${failed} failed`;
+    document.getElementById('summary').style.color =
+      failed === 0 ? 'var(--green)' : 'var(--red)';
+    document.getElementById('list').innerHTML = results.map(r => `
+      <div class="t ${r.pass ? 't-pass' : 't-fail'}">
+        <span class="t-mark">${r.pass ? '✓' : '✕'}</span>
+        <span>${r.name}${r.error ? `<span class="t-err">${r.error}</span>` : ''}</span>
+      </div>`).join('');
+  </script>
+</body>
+</html>
