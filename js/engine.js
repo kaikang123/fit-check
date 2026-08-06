@@ -23,6 +23,41 @@ function avg(xs) {
   return xs.reduce((a, b) => a + b, 0) / xs.length;
 }
 
+function median(xs) {
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = s.length >> 1;
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+// Number of logs before a brand's correction is treated as well-established.
+export const CONFIDENT_SAMPLE = 3;
+
+// Half of the entries' influence is lost every this many days, so a brand
+// re-sized two years ago stops dominating what it does today.
+const HALF_LIFE_DAYS = 540;
+
+function recencyWeight(dateStr) {
+  if (!dateStr) return 1;
+  const days = (Date.now() - new Date(dateStr).getTime()) / 86400000;
+  if (!Number.isFinite(days) || days <= 0) return 1;
+  return Math.pow(0.5, days / HALF_LIFE_DAYS);
+}
+
+// Weighted median: the robustness of a median with recency taken into account.
+// A single mistaken log can shift a mean arbitrarily far; it cannot do that
+// here, which matters because every log is a human judgement call.
+function weightedMedian(pairs) {
+  const sorted = [...pairs].sort((a, b) => a.value - b.value);
+  const total = sorted.reduce((sum, p) => sum + p.weight, 0);
+  if (!total) return median(sorted.map(p => p.value));
+  let acc = 0;
+  for (const p of sorted) {
+    acc += p.weight;
+    if (acc >= total / 2) return p.value;
+  }
+  return sorted[sorted.length - 1].value;
+}
+
 // Chart-derived flat width for a brand/dept/category/size, before any
 // personal offset.
 export function chartFlat(brand, dept, category, size, cut) {
@@ -38,14 +73,22 @@ export function chartFlat(brand, dept, category, size, cut) {
 function personalOffset(profile, ref, brand, dept, family) {
   const logs = profile.closet.filter(l =>
     l.brandId === brand.id && l.dept === dept && CATEGORIES[l.category].family === family);
-  const offsets = [];
+  const pairs = [];
   for (const log of logs) {
     const cf = chartFlat(brand, dept, log.category, log.size, 'regular');
     if (cf == null) continue;
-    offsets.push(ref.main + log.feel * FEEL_CM - cf);
+    pairs.push({ value: ref.main + log.feel * FEEL_CM - cf, weight: recencyWeight(log.date) });
   }
-  if (!offsets.length) return null;
-  return { offset: avg(offsets), count: offsets.length };
+  if (!pairs.length) return null;
+
+  const values = pairs.map(p => p.value);
+  const offset = weightedMedian(pairs);
+  // Spread across the logs. Wide disagreement means the brand is inconsistent
+  // (or a log was a mistake), and the UI should not present it as settled.
+  const spread = values.length > 1
+    ? Math.max(...values) - Math.min(...values)
+    : 0;
+  return { offset, count: pairs.length, spread, mean: avg(values) };
 }
 
 // Everything this profile's model has worked out so far, per brand and family.
@@ -69,7 +112,11 @@ export function learnedOffsets(profile) {
         out.push({
           brandId: brand.id, brandName: brand.name,
           dept, family,
-          offset: personal.offset, count: personal.count,
+          offset: personal.offset, count: personal.count, spread: personal.spread,
+          settled: personal.count >= CONFIDENT_SAMPLE,
+          // Logs that disagree by more than a size step aren't really telling
+          // one story about this brand.
+          inconsistent: personal.spread > FEEL_CM * 2,
           // Positive offset means the garment runs wider than the chart implies.
           direction: personal.offset > 0.25 ? 'large' : personal.offset < -0.25 ? 'small' : 'true',
         });
@@ -105,8 +152,15 @@ export function predict(profile, ref, { brandId, dept, category, size, cut, era 
   const personal = personalOffset(profile, ref, brand, dept, cat.family);
   if (personal) {
     flat += personal.offset;
-    confidence = 'high';
+    // One log is a data point, not a pattern. Claiming high confidence off a
+    // single entry was overselling it — and contradicted the fit-model screen,
+    // which has always called anything under three garments "early".
+    const settled = personal.count >= CONFIDENT_SAMPLE;
+    confidence = settled ? 'high' : 'medium';
     reasons.push(`Adjusted ${fmtSignedUnit(personal.offset, unit)} from ${personal.count} ${brand.name} ${fam.label.toLowerCase()} garment${personal.count > 1 ? 's' : ''} in your closet log`);
+    if (!settled) {
+      reasons.push(`Only ${personal.count} log${personal.count > 1 ? 's' : ''} for this brand so far — ${CONFIDENT_SAMPLE - personal.count} more and this becomes a confident correction`);
+    }
   }
 
   const eraInfo = ERAS[era] || ERAS.current;
@@ -164,7 +218,33 @@ export function verdict(flat, ref, predSecondary, unit = 'cm', preference = 'reg
     else if (dl < -3) detail += ` Also runs ${fmt(Math.abs(dl), unit)} shorter in the ${fam.secondaryShort} than your reference.`;
   }
 
-  return { delta: d, band, title, detail };
+  return { delta: d, band, title, detail, thresholds: t };
+}
+
+// Where a garment sits on the tolerance scale, as fractions of the gauge
+// width, so the UI can draw it without duplicating any threshold logic.
+export function gaugeGeometry(ref, delta, preference = 'regular') {
+  const base = THRESHOLDS[ref.family];
+  const p = FIT_PREFERENCES[preference] ?? FIT_PREFERENCES.regular;
+  const scale = FAMILY_BAND_SCALE[ref.family];
+  const t = {
+    tight2: base.tight2 - p.tightExt * scale,
+    tight1: base.tight1 - p.tightExt * scale,
+    fit: base.fit + p.looseExt * scale,
+    loose1: base.loose1 + p.looseExt * scale,
+  };
+  // Show a little beyond the outermost bands so extremes stay on the gauge.
+  const span = Math.max(Math.abs(t.tight2), Math.abs(t.loose1)) * 1.6;
+  const pos = v => Math.min(1, Math.max(0, (v + span) / (span * 2)));
+  return {
+    span,
+    marker: pos(delta),
+    clamped: Math.abs(delta) > span,
+    stops: {
+      tight2: pos(t.tight2), tight1: pos(t.tight1),
+      fit: pos(t.fit), loose1: pos(t.loose1),
+    },
+  };
 }
 
 // A scan-derived reference is itself an estimate, so anything measured against

@@ -2,9 +2,10 @@ import { BRANDS, DEPTS, FEELS, ERAS, CUTS, CATEGORIES, FAMILIES, FIT_PREFERENCES
 import * as store from './store.js';
 import {
   predict, verdict, brandById, CONFIDENCE_LABELS, learnedOffsets, trainingSignals,
+  gaugeGeometry,
 } from './engine.js';
 import { renderMeasure } from './measure.js';
-import { DIAGRAMS, categoryIcon, ICONS } from './icons.js';
+import { DIAGRAMS, categoryIcon, ICONS, fitGauge } from './icons.js';
 import { UNITS, ENTRY_MODES, toCm, fmt, fmtSigned, bounds, secondaryBounds } from './units.js';
 import * as catalog from './catalog.js';
 import { renderBodyScan, teardownBodyScan, saveScan } from './body.js';
@@ -315,10 +316,11 @@ function refLineHtml(p, category) {
     <span class="sub">${CATEGORIES[ref.category].label}${brand ? ` · ${brand}` : ''} · ${fmt(ref.main, u())} ${FAMILIES[family].mainShort}</span></span></div>`;
 }
 
-function verdictHtml(category, v, confidence, reasons, confidenceLabel) {
+function verdictHtml(category, v, confidence, reasons, confidenceLabel, gauge) {
   return `
     <div class="verdict verdict-${v.band}">
       <div class="verdict-head">${categoryIcon(category)}<div class="verdict-title">${v.title}</div></div>
+      ${gauge || ''}
       <span class="chip chip-${confidence}">${confidenceLabel || CONFIDENCE_LABELS[confidence]}</span>
       <p>${v.detail}</p>
       <ul class="reasons">${reasons.filter(Boolean).map(r => `<li>${esc(r)}</li>`).join('')}</ul>
@@ -450,7 +452,8 @@ function openEntry(container, p, entry, extra = '') {
         <span class="sub">${DEPTS[entry.dept]} · ${CATEGORIES[entry.category].label}</span></div>
       </div>
       ${best ? verdictHtml(entry.category, best.v, best.pred.confidence,
-        [`Best size for you: ${best.size}`, ...best.pred.reasons], best.pred.confidenceLabel) : ''}
+        [`Best size for you: ${best.size}`, ...best.pred.reasons], best.pred.confidenceLabel,
+        fitGauge(gaugeGeometry(ref, best.v.delta, pref(p)), best.v.band)) : ''}
       <h3>All sizes</h3>
       ${rows}
       <div class="row">
@@ -536,7 +539,9 @@ function renderManualMode(el, p) {
     const pred = predict(p, ref, input, u());
     if (!pred) return;
     const v = verdict(pred.flat, ref, null, u(), pref(p));
-    el.querySelector('#ck-result').innerHTML = verdictHtml(category, v, pred.confidence, pred.reasons, pred.confidenceLabel);
+    el.querySelector('#ck-result').innerHTML = verdictHtml(
+      category, v, pred.confidence, pred.reasons, pred.confidenceLabel,
+      fitGauge(gaugeGeometry(ref, v.delta, pref(p)), v.band));
     store.addHistory(p, {
       kind: 'manual', category,
       brandId: input.brandId, dept: input.dept, size: input.size,
@@ -716,8 +721,9 @@ function fitModelHtml(p) {
       <div class="list-item">
         <span class="thumb thumb-icon">${categoryIcon(l.family === 'tops' ? 'tshirt' : 'pants')}</span>
         <div class="grow">${esc(l.brandName)} ${DEPTS[l.dept].toLowerCase()} ${FAMILIES[l.family].label.toLowerCase()}
-          <span class="sub">${wording} · learned from ${l.count} garment${l.count === 1 ? '' : 's'}</span></div>
-        <span class="chip chip-${l.count >= 3 ? 'high' : 'medium'}">${l.count >= 3 ? 'confident' : 'early'}</span>
+          <span class="sub">${wording} · from ${l.count} garment${l.count === 1 ? '' : 's'}${
+            l.inconsistent ? ' · your logs disagree, so this stays cautious' : ''}</span></div>
+        <span class="chip chip-${l.settled ? 'high' : 'medium'}">${l.settled ? 'confident' : 'early'}</span>
       </div>`;
   }).join('');
 

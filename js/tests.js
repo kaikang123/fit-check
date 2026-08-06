@@ -16,7 +16,7 @@ import {
 } from './bodymath.js';
 import {
   chartFlat, predict, verdict, brandById, applyReferenceConfidence,
-  learnedOffsets, trainingSignals,
+  learnedOffsets, trainingSignals, gaugeGeometry, CONFIDENT_SAMPLE,
 } from './engine.js';
 import * as catalog from './catalog.js';
 import {
@@ -352,7 +352,7 @@ test('a plain chart prediction is medium confidence', () => {
   eq(pred.confidence, 'medium');
 });
 
-test('closet logs raise confidence and shift the estimate', () => {
+test('a single closet log shifts the estimate without claiming certainty', () => {
   const p = profile({
     closet: [{ id: 'c1', brandId: 'uniqlo', dept: 'men', category: 'tshirt', size: 'M', feel: -1 }],
   });
@@ -362,8 +362,8 @@ test('closet logs raise confidence and shift the estimate', () => {
   const tuned = predict(p, topsRef, {
     brandId: 'uniqlo', dept: 'men', category: 'tshirt', size: 'L', cut: 'regular', era: 'current',
   });
-  eq(tuned.confidence, 'high');
   truthy(tuned.flat !== base.flat, 'estimate should move');
+  eq(tuned.confidence, 'medium', 'but one log is not yet a pattern');
 });
 
 test('a "runs small" log implies a narrower garment than the reference', () => {
@@ -638,6 +638,121 @@ test('parsing never throws on empty or missing input', () => {
 test('describe summarises what was and was not found', () => {
   truthy(/not recognised/.test(describe(parseTag('100% COTTON'))), 'names the gap');
   truthy(/Uniqlo/.test(describe(parseTag('UNIQLO M'))), 'names the brand');
+});
+
+/* ---------- Model confidence and robustness ---------- */
+
+function log(brandId, size, feel, date, category = 'tshirt', dept = 'men') {
+  return { id: uid(), brandId, dept, category, size, feel, date };
+}
+let uidN = 0;
+function uid() { return 'c' + (++uidN); }
+
+test('one log is not enough for high confidence', () => {
+  const p = profile({ closet: [log('uniqlo', 'M', -1)] });
+  const pred = predict(p, topsRef, {
+    brandId: 'uniqlo', dept: 'men', category: 'tshirt', size: 'L', cut: 'regular', era: 'current',
+  });
+  eq(pred.confidence, 'medium', 'a single data point is not a pattern');
+});
+
+test('three logs earn high confidence', () => {
+  const p = profile({
+    closet: [log('uniqlo', 'M', -1), log('uniqlo', 'L', -1), log('uniqlo', 'XL', -1)],
+  });
+  const pred = predict(p, topsRef, {
+    brandId: 'uniqlo', dept: 'men', category: 'tshirt', size: 'L', cut: 'regular', era: 'current',
+  });
+  eq(pred.confidence, 'high');
+});
+
+test('an early correction says how much more is needed', () => {
+  const p = profile({ closet: [log('uniqlo', 'M', -1)] });
+  const pred = predict(p, topsRef, {
+    brandId: 'uniqlo', dept: 'men', category: 'tshirt', size: 'L', cut: 'regular', era: 'current',
+  });
+  truthy(pred.reasons.some(r => /2 more/.test(r)), 'tells the user what it needs');
+});
+
+test('a single wild log cannot drag the correction with it', () => {
+  const sane = [log('uniqlo', 'M', 0), log('uniqlo', 'M', 0), log('uniqlo', 'M', 0)];
+  const withOutlier = [...sane, log('uniqlo', 'M', -2)];
+  const a = learnedOffsets(profile({ closet: sane }))[0];
+  const b = learnedOffsets(profile({ closet: withOutlier }))[0];
+  truthy(Math.abs(b.offset - a.offset) < FEEL_CM,
+    'median resists the outlier where a mean would not');
+});
+
+test('disagreeing logs are flagged as inconsistent', () => {
+  const p = profile({ closet: [log('uniqlo', 'M', -2), log('uniqlo', 'M', 2), log('uniqlo', 'M', 0)] });
+  eq(learnedOffsets(p)[0].inconsistent, true);
+});
+
+test('consistent logs of the same size are not flagged', () => {
+  const p = profile({ closet: [log('uniqlo', 'M', 0), log('uniqlo', 'M', 0), log('uniqlo', 'M', 0)] });
+  eq(learnedOffsets(p)[0].inconsistent, false);
+});
+
+// Calling an M and an XL both "just right" really is contradictory — those
+// garments are 8 cm apart. The flag is meant to catch exactly this.
+test('calling several different sizes all just-right is inconsistent', () => {
+  const p = profile({ closet: [log('uniqlo', 'M', 0), log('uniqlo', 'L', 0), log('uniqlo', 'XL', 0)] });
+  eq(learnedOffsets(p)[0].inconsistent, true);
+});
+
+test('recent logs outweigh very old ones', () => {
+  const old = new Date(Date.now() - 1400 * 86400000).toISOString().slice(0, 10);
+  const now = new Date().toISOString().slice(0, 10);
+  const recentOnly = learnedOffsets(profile({
+    closet: [log('uniqlo', 'M', 2, now), log('uniqlo', 'M', 2, now)],
+  }))[0].offset;
+  const withStale = learnedOffsets(profile({
+    closet: [
+      log('uniqlo', 'M', -2, old), log('uniqlo', 'M', -2, old),
+      log('uniqlo', 'M', 2, now), log('uniqlo', 'M', 2, now), log('uniqlo', 'M', 2, now),
+    ],
+  }))[0].offset;
+  eq(withStale, recentOnly, 'four-year-old logs do not overturn current ones');
+});
+
+test('settled flag matches the confidence threshold', () => {
+  const two = learnedOffsets(profile({ closet: [log('uniqlo', 'M', 0), log('uniqlo', 'L', 0)] }))[0];
+  const three = learnedOffsets(profile({
+    closet: [log('uniqlo', 'M', 0), log('uniqlo', 'L', 0), log('uniqlo', 'XL', 0)],
+  }))[0];
+  eq(two.settled, false);
+  eq(three.settled, true);
+  eq(CONFIDENT_SAMPLE, 3);
+});
+
+/* ---------- Fit gauge ---------- */
+
+test('the reference sits at the centre of the gauge', () => {
+  near(gaugeGeometry(topsRef, 0).marker, 0.5, 1e-9);
+});
+
+test('a tighter garment sits left, a looser one right', () => {
+  truthy(gaugeGeometry(topsRef, -3).marker < 0.5, 'tight is left');
+  truthy(gaugeGeometry(topsRef, 3).marker > 0.5, 'loose is right');
+});
+
+test('gauge stops are ordered and inside the track', () => {
+  const s = gaugeGeometry(topsRef, 0).stops;
+  truthy(s.tight2 < s.tight1 && s.tight1 < s.fit && s.fit < s.loose1, 'ordered');
+  for (const v of Object.values(s)) truthy(v >= 0 && v <= 1, 'within track');
+});
+
+test('extreme values clamp onto the gauge and are marked', () => {
+  const g = gaugeGeometry(topsRef, 999);
+  eq(g.marker, 1);
+  eq(g.clamped, true);
+});
+
+test('preference widens the good band on the gauge', () => {
+  const regular = gaugeGeometry(topsRef, 0, 'regular').stops;
+  const baggy = gaugeGeometry(topsRef, 0, 'baggy').stops;
+  truthy((baggy.fit - baggy.tight1) > (regular.fit - regular.tight1),
+    'baggy tolerates a wider range');
 });
 
 /* ---------- Price tags ---------- */

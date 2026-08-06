@@ -1,15 +1,34 @@
 :root {
-  --bg: #101418;
-  --card: #1a2027;
-  --card2: #222a33;
+  --bg: #0d1116;
+  --card: #171d24;
+  --card2: #212932;
   --text: #e8edf2;
-  --muted: #93a1b0;
+  --muted: #94a3b3;
   --accent: #4f8ef7;
-  --border: #2b3540;
+  --border: #29323d;
   --green: #22c55e;
   --amber: #f59e0b;
   --red: #ef4444;
   --blue: #3b82f6;
+
+  /* Type scale — a fixed set of steps rather than ad-hoc sizes, so headings
+     and body text stay in proportion across every screen. */
+  --t-xs: 0.72rem;
+  --t-sm: 0.82rem;
+  --t-md: 0.92rem;
+  --t-lg: 1.08rem;
+  --t-xl: 1.35rem;
+
+  /* Spacing rhythm on a 4px grid. */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+
+  --radius: 14px;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.18);
 }
 
 * { box-sizing: border-box; margin: 0; }
@@ -17,8 +36,11 @@
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  font-size: var(--t-md);
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 #app { max-width: 480px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
@@ -48,12 +70,19 @@ body {
 
 .card {
   background: var(--card); border: 1px solid var(--border);
-  border-radius: 14px; padding: 16px; margin-bottom: 14px;
+  border-radius: var(--radius); padding: var(--s4);
+  margin-bottom: var(--s3); box-shadow: var(--shadow);
 }
-.card h2 { font-size: 1.05rem; margin-bottom: 8px; }
-.card h3 { font-size: 0.95rem; margin-bottom: 8px; }
+.card h2 {
+  font-size: var(--t-lg); line-height: 1.3; margin-bottom: var(--s2);
+  letter-spacing: -0.01em; font-weight: 700;
+}
+.card h3 {
+  font-size: var(--t-md); margin-bottom: var(--s2);
+  letter-spacing: -0.005em; font-weight: 650;
+}
 
-.muted { color: var(--muted); font-size: 0.85rem; line-height: 1.45; margin-bottom: 10px; }
+.muted { color: var(--muted); font-size: var(--t-sm); line-height: 1.5; margin-bottom: var(--s2); }
 
 .field { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 12px; }
 .field input, .field select {
@@ -85,9 +114,19 @@ body {
 .chip-medium { background: rgba(245,158,11,.15); color: var(--amber); border-color: transparent; cursor: default; }
 .chip-low { background: rgba(239,68,68,.15); color: var(--red); border-color: transparent; cursor: default; }
 
-.verdict { border-radius: 14px; padding: 16px; margin: 14px 0; border: 1px solid var(--border); background: var(--card); }
-.verdict-title { font-size: 1.05rem; font-weight: 700; margin-bottom: 8px; }
-.verdict p { font-size: 0.88rem; line-height: 1.5; margin: 10px 0 6px; }
+.verdict {
+  border-radius: var(--radius); padding: var(--s4); margin: var(--s3) 0;
+  border: 1px solid var(--border); background: var(--card);
+}
+.verdict-title {
+  font-size: var(--t-xl); font-weight: 750; line-height: 1.25;
+  letter-spacing: -0.02em; margin-bottom: var(--s2);
+}
+.verdict p { font-size: var(--t-sm); line-height: 1.55; margin: var(--s3) 0 var(--s1); }
+
+/* The gauge carries the answer visually, so it sits directly under the title
+   and gets room to breathe. */
+.gauge { display: block; width: 100%; max-width: 320px; margin: var(--s3) auto var(--s2); }
 .verdict-fit    { border-color: rgba(34,197,94,.5); }
 .verdict-fit    .verdict-title { color: var(--green); }
 .verdict-tight1 { border-color: rgba(245,158,11,.5); }

@@ -5,8 +5,8 @@
 
 import { BRANDS, CATEGORIES, FAMILIES } from './data.js';
 import { activeProfile, activeRef, addRef, addHistory, thumbnail, units } from './store.js';
-import { verdict, CONFIDENCE_LABELS, applyReferenceConfidence } from './engine.js';
-import { ICONS, categoryIcon } from './icons.js';
+import { verdict, CONFIDENCE_LABELS, applyReferenceConfidence, gaugeGeometry } from './engine.js';
+import { ICONS, categoryIcon, fitGauge } from './icons.js';
 import { fmt } from './units.js';
 import { cameraMessage } from './env.js';
 
@@ -289,6 +289,7 @@ function wireResults(el) {
     el.querySelector('#m-verdict').innerHTML = `
       <div class="verdict verdict-${v.band}">
         <div class="verdict-title">${v.title}</div>
+        ${fitGauge(gaugeGeometry(ref, v.delta, profile.preference || 'regular'), v.band)}
         <span class="chip chip-${pred.confidence}">${pred.confidenceLabel || CONFIDENCE_LABELS[pred.confidence]}</span>
         <p>${v.detail}</p>
         <ul class="reasons">${pred.reasons.map(r => `<li>${r}</li>`).join('')}</ul>

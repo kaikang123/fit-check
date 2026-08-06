@@ -13,9 +13,9 @@
 import { BRANDS, CATEGORIES, DEPTS, FAMILIES } from './data.js';
 import * as store from './store.js';
 import * as catalog from './catalog.js';
-import { verdict, CONFIDENCE_LABELS } from './engine.js';
+import { verdict, CONFIDENCE_LABELS, gaugeGeometry } from './engine.js';
 import { fmt } from './units.js';
-import { ICONS, categoryIcon } from './icons.js';
+import { ICONS, categoryIcon, fitGauge } from './icons.js';
 import { parseTag } from './tagparse.js';
 import { isSupported as barcodeSupported, normalizeBarcode } from './scan.js';
 import { cameraMessage } from './env.js';
@@ -327,6 +327,7 @@ function resolve(container, profile, info, onNeedReference) {
       </div>
       <div class="verdict verdict-${v.band}">
         <div class="verdict-head">${categoryIcon(info.category)}<div class="verdict-title">${v.title}</div></div>
+        ${fitGauge(gaugeGeometry(ref, v.delta, profile.preference || 'regular'), v.band)}
         <span class="chip chip-${pred.confidence}">${pred.confidenceLabel || CONFIDENCE_LABELS[pred.confidence]}</span>
         <p>${v.detail}</p>
         <ul class="reasons">

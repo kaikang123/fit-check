@@ -52,3 +52,47 @@ export const DIAGRAMS = {
 export function categoryIcon(category) {
   return ICONS[category] || ICONS.tshirt;
 }
+
+// A verdict is a position on a scale, not a sentence. Drawing it means the
+// answer lands before the words are read, and it shows *how close* a call was
+// — the difference between "just fits" and "comfortably fits" is invisible in
+// text but obvious here.
+export function fitGauge(geo, band) {
+  const W = 300;
+  const H = 46;
+  const y = 22;
+  const h = 9;
+  const x = f => f * W;
+  const seg = (from, to, color, opacity = 1) =>
+    `<rect x="${x(from).toFixed(1)}" y="${y}" width="${Math.max(0, x(to) - x(from)).toFixed(1)}"
+       height="${h}" fill="${color}" opacity="${opacity}" />`;
+
+  const s = geo.stops;
+  const mx = x(geo.marker);
+
+  return `
+  <svg class="gauge" viewBox="0 0 ${W} ${H}" role="img"
+       aria-label="Fit position relative to your reference garment">
+    <g>
+      ${seg(0, s.tight2, 'var(--red)', 0.5)}
+      ${seg(s.tight2, s.tight1, 'var(--amber)', 0.5)}
+      ${seg(s.tight1, s.fit, 'var(--green)', 0.85)}
+      ${seg(s.fit, s.loose1, 'var(--amber)', 0.5)}
+      ${seg(s.loose1, 1, 'var(--red)', 0.5)}
+    </g>
+    <line x1="${W / 2}" y1="${y - 5}" x2="${W / 2}" y2="${y + h + 5}"
+          stroke="var(--muted)" stroke-width="1" stroke-dasharray="2 2" />
+    <text x="${W / 2}" y="${y - 9}" text-anchor="middle" fill="var(--muted)"
+          font-size="9">your reference</text>
+    <g transform="translate(${mx.toFixed(1)} ${y + h / 2})">
+      <circle r="8" fill="var(--bg)" stroke="var(--${bandColor(band)})" stroke-width="3" />
+      ${geo.clamped ? `<text y="3" text-anchor="middle" fill="var(--${bandColor(band)})" font-size="9" font-weight="700">!</text>` : ''}
+    </g>
+  </svg>`;
+}
+
+function bandColor(band) {
+  if (band === 'fit') return 'green';
+  if (band === 'tight1' || band === 'loose1') return 'amber';
+  return 'red';
+}
