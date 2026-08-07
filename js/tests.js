@@ -1041,6 +1041,58 @@ test('removing a single size leaves the rest, removing the last drops the entry'
   resetUserGarments();
 });
 
+/* ---------- Backup round-trip ---------- */
+
+test('a backup carries photos, logs, measured garments and calibration', () => {
+  localStorage.clear();
+  const p = store.addProfile('RoundTrip', 'men', 'regular');
+  store.addRef(p, {
+    name: 'Grey tee', brandId: 'uniqlo', category: 'tshirt',
+    main: 53, secondary: 70, photo: 'data:image/jpeg;base64,AAAA', source: 'manual',
+  });
+  store.addClosetLog(p, { brandId: 'uniqlo', dept: 'men', category: 'tshirt', size: 'M', feel: -1 });
+  store.addUserGarment({
+    brandId: 'uniqlo', name: 'Supima Tee', dept: 'men',
+    category: 'tshirt', size: 'M', main: 52,
+  });
+  localStorage.setItem('fitcheck-calibration-v1',
+    JSON.stringify([{ id: 'c1', predictedFlat: 50, actualFlat: 53 }]));
+
+  const backup = store.exportJson();
+  const dump = JSON.parse(backup);
+  truthy(dump.state.profiles[0].refs[0].photo, 'photo travels with the backup');
+  eq(dump.calibration.length, 1, 'calibration travels too');
+
+  // Wipe as if this were a different device, then restore.
+  localStorage.clear();
+  store.state.profiles.length = 0;
+  store.state.userGarments.length = 0;
+  const res = store.importJson(backup);
+  eq(res.ok, true);
+  eq(res.profiles, 1);
+  eq(res.calibration, 1);
+  truthy(store.state.profiles[0].refs[0].photo, 'photo restored');
+  eq(store.state.userGarments.length, 1, 'measured garments restored');
+  eq(JSON.parse(localStorage.getItem('fitcheck-calibration-v1')).length, 1);
+  localStorage.clear();
+  store.state.profiles.length = 0;
+  store.state.userGarments.length = 0;
+});
+
+test('an older backup without calibration does not wipe existing measurements', () => {
+  localStorage.clear();
+  localStorage.setItem('fitcheck-calibration-v1', JSON.stringify([{ id: 'keep' }]));
+  const v1 = JSON.stringify({
+    app: 'fit-check', version: 1,
+    state: { profiles: [{ id: 'p', name: 'Old', dept: 'men', refs: [], closet: [], history: [] }] },
+  });
+  const res = store.importJson(v1);
+  eq(res.calibration, 0, 'nothing to restore');
+  eq(JSON.parse(localStorage.getItem('fitcheck-calibration-v1')).length, 1, 'local data survives');
+  localStorage.clear();
+  store.state.profiles.length = 0;
+});
+
 /* ---------- Catalog noise ---------- */
 
 test('an empty search shows only genuinely measured garments', () => {

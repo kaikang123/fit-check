@@ -835,8 +835,9 @@ function renderProfile(el, p) {
             it turns a one-off measurement into something every future check can use.</p>`}
 
         <h3>Backup</h3>
-        <p class="hint">Everything lives on this device only — nothing is uploaded. Clearing your browser data would erase it, so keep a backup.
-          ${Object.keys(store.state.barcodes).length} barcode${Object.keys(store.state.barcodes).length === 1 ? '' : 's'} linked.</p>
+        <p class="hint">Everything lives on this device only — nothing is uploaded, and nothing syncs between
+          your phone and your computer. Moving to another device means exporting here and restoring there.
+          The file carries your profiles, photos, logs, measured garments and calibration.</p>
         <div class="row">
           <button id="pf-export" class="btn">Export</button>
           <label class="btn file-btn">Restore

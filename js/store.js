@@ -248,8 +248,28 @@ export function removeUserGarmentSize(id, size) {
   else save();
 }
 
+// Calibration lives under its own key so the workbench can never corrupt app
+// data, but a backup that silently omitted it would lose the measurements the
+// bands are meant to be derived from — especially when they were recorded on a
+// phone in a shop and the analysis happens elsewhere.
+const CALIBRATION_KEY = 'fitcheck-calibration-v1';
+
+function readCalibration() {
+  try {
+    return JSON.parse(localStorage.getItem(CALIBRATION_KEY)) || [];
+  } catch (e) {
+    return [];
+  }
+}
+
 export function exportJson() {
-  return JSON.stringify({ app: 'fit-check', version: 1, exported: new Date().toISOString(), state }, null, 2);
+  return JSON.stringify({
+    app: 'fit-check',
+    version: 2,
+    exported: new Date().toISOString(),
+    state,
+    calibration: readCalibration(),
+  }, null, 2);
 }
 
 // Replace everything from a previously exported file. Validated rather than
@@ -274,7 +294,15 @@ export function importJson(text) {
   });
   Object.assign(state, migrated);
   save();
-  return { ok: true, profiles: migrated.profiles.length };
+
+  // Older backups (version 1) carry no calibration; leave whatever is already
+  // on this device alone rather than wiping it.
+  let calibration = 0;
+  if (Array.isArray(parsed?.calibration)) {
+    localStorage.setItem(CALIBRATION_KEY, JSON.stringify(parsed.calibration));
+    calibration = parsed.calibration.length;
+  }
+  return { ok: true, profiles: migrated.profiles.length, calibration };
 }
 
 // Downscale an image (or canvas/video frame) to a small JPEG dataURL thumbnail.
