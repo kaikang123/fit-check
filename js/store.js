@@ -206,12 +206,46 @@ export function barcodeLookup(barcode) {
   return state.barcodes[barcode] || null;
 }
 
-export function addUserGarment(entry) {
-  entry.id = 'user-' + uid();
-  entry.source = 'user';
+// A garment the user measured themselves. These are real dimensions off a
+// real garment, so they count as measured — the distinction from a brand's
+// published spec is who took the tape to it, not how trustworthy it is.
+export function addUserGarment({ brandId, name, dept, category, size, main, secondary }) {
+  const existing = state.userGarments.find(g =>
+    g.brandId === brandId && g.dept === dept && g.category === category
+    && g.name.toLowerCase() === name.toLowerCase());
+
+  if (existing) {
+    // Same product, another size — extend it rather than making a duplicate.
+    existing.sizes[size] = { main, secondary: secondary ?? null };
+    save();
+    return existing;
+  }
+
+  const entry = {
+    id: 'user-' + uid(),
+    brandId, name, dept, category,
+    kind: 'measured',
+    source: 'user',
+    sourceNote: 'You measured this garment yourself',
+    sizes: { [size]: { main, secondary: secondary ?? null } },
+    added: new Date().toISOString().slice(0, 10),
+  };
   state.userGarments.push(entry);
   save();
   return entry;
+}
+
+export function removeUserGarment(id) {
+  state.userGarments = state.userGarments.filter(g => g.id !== id);
+  save();
+}
+
+export function removeUserGarmentSize(id, size) {
+  const g = state.userGarments.find(x => x.id === id);
+  if (!g) return;
+  delete g.sizes[size];
+  if (!Object.keys(g.sizes).length) removeUserGarment(id);
+  else save();
 }
 
 export function exportJson() {

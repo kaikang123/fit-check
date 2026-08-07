@@ -86,6 +86,14 @@ if (cameraUnavailableReason() === 'insecure') {
   document.getElementById('app').prepend(bar);
 }
 
+// Offline support. Registered last so a failure here can never stop the app
+// from starting — it is an enhancement, not a dependency.
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => { /* offline is optional */ });
+  });
+}
+
 store.onSaveError(msg => {
   let bar = document.getElementById('save-error');
   if (!bar) {
@@ -811,6 +819,21 @@ function renderProfile(el, p) {
           </div>`).join('')}
         <div class="row"><button id="pf-new" class="btn">+ Add a profile</button></div>
 
+        <h3>Garments you've measured</h3>
+        ${store.state.userGarments.length ? `
+          <p class="hint">These are real measurements, so checks against them are as good as
+            a brand's published spec. Wrong numbers are worse than none — delete anything doubtful.</p>
+          ${store.state.userGarments.map(g => `
+            <div class="list-item">
+              <span class="thumb thumb-icon">${categoryIcon(g.category)}</span>
+              <div class="grow">${esc(brandName(g.brandId) || 'Unknown')} — ${esc(g.name)}
+                <span class="sub">${DEPTS[g.dept]} · ${CATEGORIES[g.category].label} · ${
+                  Object.entries(g.sizes).map(([s, d]) => `${s}: ${fmt(d.main, u())}`).join(' · ')}</span></div>
+              <button class="btn btn-sm btn-danger" data-delgarment="${g.id}">Remove</button>
+            </div>`).join('')}`
+        : `<p class="hint">None yet. Measure a garment from a photo and choose “Add to catalog” —
+            it turns a one-off measurement into something every future check can use.</p>`}
+
         <h3>Backup</h3>
         <p class="hint">Everything lives on this device only — nothing is uploaded. Clearing your browser data would erase it, so keep a backup.
           ${Object.keys(store.state.barcodes).length} barcode${Object.keys(store.state.barcodes).length === 1 ? '' : 's'} linked.</p>
@@ -936,6 +959,14 @@ function renderProfile(el, p) {
     };
     paint();
   };
+
+  el.querySelectorAll('[data-delgarment]').forEach(btn => {
+    btn.onclick = () => {
+      if (!confirm('Remove this garment from your catalog? Its measurements will be lost.')) return;
+      store.removeUserGarment(btn.dataset.delgarment);
+      render();
+    };
+  });
 
   const ioMsg = el.querySelector('#pf-io-msg');
 

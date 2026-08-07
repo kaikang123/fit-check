@@ -3,8 +3,10 @@
 // frame, taps two points on the reference to set scale, then taps the
 // garment's key dimensions (chest/length for tops, waist/inseam for bottoms).
 
-import { BRANDS, CATEGORIES, FAMILIES } from './data.js';
-import { activeProfile, activeRef, addRef, addHistory, thumbnail, units } from './store.js';
+import { BRANDS, CATEGORIES, FAMILIES, DEPTS } from './data.js';
+import {
+  activeProfile, activeRef, addRef, addHistory, thumbnail, units, addUserGarment,
+} from './store.js';
 import { verdict, CONFIDENCE_LABELS, applyReferenceConfidence, gaugeGeometry } from './engine.js';
 import { ICONS, categoryIcon, fitGauge } from './icons.js';
 import { fmt } from './units.js';
@@ -251,6 +253,24 @@ function resultsHtml() {
       <div class="row">
         <button id="m-check" class="btn btn-primary">Check fit vs my reference</button>
         <button id="m-saveref" class="btn">Save as reference garment</button>
+        <button id="m-savecat" class="btn">Add to catalog</button>
+      </div>
+      <div id="m-savecat-form" hidden>
+        <p class="hint">Real measurements are the scarcest thing this app has. Saving this
+          makes every future check of the same product accurate instead of estimated.</p>
+        <label class="field">Product name
+          <input id="m-cat-name" type="text" placeholder="e.g. Heavy Cotton Tee">
+        </label>
+        <div class="grid2">
+          <label class="field">Brand
+            <select id="m-cat-brand">${BRANDS.map(b => `<option value="${b.id}">${b.name}</option>`).join('')}</select>
+          </label>
+          <label class="field">Department
+            <select id="m-cat-dept">${Object.entries(DEPTS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>
+          </label>
+        </div>
+        <label class="field">Which labelled size is this?<select id="m-cat-size"></select></label>
+        <button id="m-savecat-go" class="btn btn-primary">Save to catalog</button>
       </div>
       <div id="m-saveref-form" hidden>
         <label class="field">Name this garment
@@ -303,6 +323,37 @@ function wireResults(el) {
 
   el.querySelector('#m-saveref').onclick = () => {
     el.querySelector('#m-saveref-form').hidden = false;
+  };
+
+  // Turning a measurement into a catalog entry is how the dataset actually
+  // grows — the brief's whole thesis is that this data is the moat.
+  const catForm = el.querySelector('#m-savecat-form');
+  const catBrand = el.querySelector('#m-cat-brand');
+  const catDept = el.querySelector('#m-cat-dept');
+  const catSize = el.querySelector('#m-cat-size');
+  const fillCatSizes = () => {
+    const brand = BRANDS.find(b => b.id === catBrand.value);
+    const chart = brand?.charts[catDept.value]?.[session.family];
+    catSize.innerHTML = chart
+      ? Object.keys(chart).map(s => `<option value="${s}">${s}</option>`).join('')
+      : '<option value="">—</option>';
+  };
+  catBrand.onchange = catDept.onchange = fillCatSizes;
+  fillCatSizes();
+
+  el.querySelector('#m-savecat').onclick = () => { catForm.hidden = false; };
+  el.querySelector('#m-savecat-go').onclick = () => {
+    const name = el.querySelector('#m-cat-name').value.trim();
+    if (!name) return el.querySelector('#m-cat-name').focus();
+    if (!catSize.value) return;
+    const saved = addUserGarment({
+      brandId: catBrand.value, name, dept: catDept.value,
+      category: session.category, size: catSize.value,
+      main, secondary,
+    });
+    const count = Object.keys(saved.sizes).length;
+    catForm.innerHTML = `<p class="muted">Saved. “${esc(name)}” now has ${count} measured size${count === 1 ? '' : 's'}
+      in your catalog, and searches will find it.</p>`;
   };
   el.querySelector('#m-saveref-go').onclick = () => {
     addRef(profile, {

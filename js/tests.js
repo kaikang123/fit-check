@@ -19,6 +19,7 @@ import {
   learnedOffsets, trainingSignals, gaugeGeometry, CONFIDENT_SAMPLE,
 } from './engine.js';
 import * as catalog from './catalog.js';
+import * as store from './store.js';
 import {
   summarize, quantile, coverage, bandForCoverage, verdictOnBand, groupBy, errorOf, toCsv,
 } from './calibmath.js';
@@ -954,6 +955,90 @@ test('csv export has a header and one row per sample', () => {
   eq(lines.length, 3);
   truthy(lines[0].startsWith('date,brand'), 'header');
   truthy(lines[1].endsWith('2.00'), 'signed error in the row');
+});
+
+/* ---------- User-measured catalog entries ---------- */
+
+// These touch real storage, so each test starts from a clean slate.
+function resetUserGarments() {
+  store.state.userGarments.length = 0;
+}
+
+test('a measured garment becomes a searchable catalog entry', () => {
+  resetUserGarments();
+  const g = store.addUserGarment({
+    brandId: 'uniqlo', name: 'Supima Crew Tee', dept: 'men',
+    category: 'tshirt', size: 'M', main: 52, secondary: 70,
+  });
+  eq(g.kind, 'measured');
+  eq(g.source, 'user');
+  truthy(catalog.search('supima').some(e => e.id === g.id), 'findable by product name');
+  resetUserGarments();
+});
+
+test('a second size extends the same product rather than duplicating it', () => {
+  resetUserGarments();
+  const a = store.addUserGarment({
+    brandId: 'uniqlo', name: 'Supima Crew Tee', dept: 'men',
+    category: 'tshirt', size: 'M', main: 52,
+  });
+  const b = store.addUserGarment({
+    brandId: 'uniqlo', name: 'supima crew tee', dept: 'men',
+    category: 'tshirt', size: 'L', main: 56,
+  });
+  eq(a.id, b.id, 'matched case-insensitively');
+  eq(store.state.userGarments.length, 1);
+  eq(Object.keys(b.sizes).length, 2);
+  resetUserGarments();
+});
+
+test('a user-measured garment predicts from its real dimensions', () => {
+  resetUserGarments();
+  const g = store.addUserGarment({
+    brandId: 'uniqlo', name: 'Supima Crew Tee', dept: 'men',
+    category: 'tshirt', size: 'M', main: 52,
+  });
+  const pred = catalog.catalogPredict(profile(), topsRef, catalog.entryById(g.id), 'M');
+  eq(pred.confidence, 'high');
+  near(pred.flat, 52, 1e-9, 'uses the measurement, not the chart');
+  resetUserGarments();
+});
+
+test('a user measurement is not described as published', () => {
+  resetUserGarments();
+  const g = store.addUserGarment({
+    brandId: 'zara', name: 'Boxy Tee', dept: 'men',
+    category: 'tshirt', size: 'M', main: 55,
+  });
+  const pred = catalog.catalogPredict(profile(), topsRef, catalog.entryById(g.id), 'M');
+  truthy(/you measured/i.test(pred.confidenceLabel), 'credits the user');
+  truthy(!/published/i.test(pred.confidenceLabel), 'and does not claim a brand spec');
+  resetUserGarments();
+});
+
+test('user garments survive an empty search alongside measured ones', () => {
+  resetUserGarments();
+  store.addUserGarment({
+    brandId: 'nike', name: 'Dri-FIT Tee', dept: 'men',
+    category: 'tshirt', size: 'L', main: 54,
+  });
+  truthy(catalog.search('').some(e => e.source === 'user'), 'not filtered out as noise');
+  resetUserGarments();
+});
+
+test('removing a single size leaves the rest, removing the last drops the entry', () => {
+  resetUserGarments();
+  const g = store.addUserGarment({
+    brandId: 'hm', name: 'Relaxed Tee', dept: 'men', category: 'tshirt', size: 'M', main: 53,
+  });
+  store.addUserGarment({
+    brandId: 'hm', name: 'Relaxed Tee', dept: 'men', category: 'tshirt', size: 'L', main: 57,
+  });
+  store.removeUserGarmentSize(g.id, 'M');
+  eq(Object.keys(store.state.userGarments[0].sizes).length, 1);
+  store.removeUserGarmentSize(g.id, 'L');
+  eq(store.state.userGarments.length, 0, 'empty entry cleans itself up');
+  resetUserGarments();
 });
 
 /* ---------- Catalog noise ---------- */

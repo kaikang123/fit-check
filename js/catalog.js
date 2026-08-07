@@ -140,13 +140,16 @@ export function catalogPredict(profile, ref, entry, size, opts = {}) {
     if (measured) {
       reasons.push('Real garment dimensions — compared directly against your reference, no size-chart guessing');
     }
+    // "Published" would misdescribe a garment the user measured themselves,
+    // and "your own data" would misdescribe a brand spec. Name the real source.
+    const measuredLabel = entry.source === 'user'
+      ? 'High confidence — you measured this garment'
+      : 'High confidence — published garment measurements';
     return applyReferenceConfidence({
       flat: dims.main,
       secondary: dims.secondary ?? null,
       confidence: measured ? 'high' : 'medium',
-      // The generic "based on your own data" wording would misdescribe a
-      // published garment spec, so measured entries name their real source.
-      confidenceLabel: measured ? 'High confidence — published garment measurements' : undefined,
+      confidenceLabel: measured ? measuredLabel : undefined,
       reasons,
     }, ref);
   }
