@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0d1116">
+  <title>Fit Check — calibration</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .stat-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: var(--s2); margin: var(--s3) 0;
+    }
+    .stat {
+      background: var(--card2); border: 1px solid var(--border);
+      border-radius: 10px; padding: var(--s3) var(--s2); text-align: center;
+    }
+    .stat-value { display: block; font-size: var(--t-lg); font-weight: 700; letter-spacing: -0.01em; }
+    .stat-label { display: block; font-size: var(--t-xs); color: var(--muted); margin-top: 2px; }
+    .calib-verdict {
+      border-radius: 10px; padding: var(--s3); margin-bottom: var(--s2);
+      font-size: var(--t-sm); line-height: 1.5; border: 1px solid var(--border);
+    }
+    .calib-ok { border-color: rgba(34,197,94,.5); }
+    .calib-too-tight { border-color: rgba(239,68,68,.5); }
+    .calib-insufficient { border-color: rgba(245,158,11,.5); }
+    .calib-table { margin-bottom: var(--s3); }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <span class="logo">Fit&nbsp;Check</span>
+      <a class="chip" href="index.html">Back to app</a>
+    </header>
+    <main id="screen"></main>
+  </div>
+  <script type="module">
+    import { render } from './js/calibrate.js';
+    render(document.getElementById('screen'));
+  </script>
+</body>
+</html>

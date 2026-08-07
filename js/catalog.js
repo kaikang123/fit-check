@@ -98,13 +98,20 @@ export function brandNameOf(entry) {
 
 // Free-text search over brand, product name, and garment type. Measured
 // entries rank above estimates so real data surfaces first.
-export function search(query, { dept } = {}) {
+export function search(query, { dept, includeGeneric } = {}) {
   const q = query.trim().toLowerCase();
   const terms = q.split(/\s+/).filter(Boolean);
   const scored = [];
 
+  // The generated per-brand entries exist so every brand stays checkable, but
+  // there are dozens of them against a handful of genuinely measured garments.
+  // Listing them unprompted buries the real data, so they wait until the user
+  // has actually typed something.
+  const showGeneric = includeGeneric ?? terms.length > 0;
+
   for (const entry of allEntries()) {
     if (dept && entry.dept !== dept) continue;
+    if (!showGeneric && entry.kind === 'chart' && entry.source !== 'user') continue;
     const brand = brandNameOf(entry).toLowerCase();
     const cat = CATEGORIES[entry.category].label.toLowerCase();
     const hay = `${brand} ${entry.name.toLowerCase()} ${cat}`;

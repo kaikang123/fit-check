@@ -379,13 +379,15 @@ function renderSearchMode(el, p) {
   const results = el.querySelector('#sr-results');
 
   const run = () => {
+    const typed = q.value.trim().length > 0;
     const entries = catalog.search(q.value, { dept: deptSel.value || undefined });
     if (!entries.length) {
-      results.innerHTML = `<div class="card"><p class="muted">Nothing matched. Try a brand name, or use Manual entry.</p></div>`;
+      results.innerHTML = `<div class="card"><p class="muted">Nothing matched. Try a brand name, or enter the size by hand.</p></div>`;
       return;
     }
     results.innerHTML = `<div class="card">
-      <h3>${entries.length} result${entries.length === 1 ? '' : 's'}</h3>
+      <h3>${typed ? `${entries.length} result${entries.length === 1 ? '' : 's'}` : 'Garments with real measurements'}</h3>
+      ${typed ? '' : '<p class="hint">These have published garment dimensions, so their verdicts are the most trustworthy. Search a brand to see everything else.</p>'}
       ${entries.map(e => `
         <div class="list-item">
           <span class="thumb thumb-icon">${categoryIcon(e.category)}</span>

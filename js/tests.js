@@ -20,6 +20,9 @@ import {
 } from './engine.js';
 import * as catalog from './catalog.js';
 import {
+  summarize, quantile, coverage, bandForCoverage, verdictOnBand, groupBy, errorOf, toCsv,
+} from './calibmath.js';
+import {
   parseTag, findBrand, findSize, findDept, findFibres, stretchOf, describe,
   findPrices, findCut, findGarmentType,
 } from './tagparse.js';
@@ -842,6 +845,129 @@ test('a care label still parses with no hangtag fields', () => {
   eq(p.price, null);
   eq(p.cut, null);
   eq(p.size.size, 'M');
+});
+
+/* ---------- Calibration statistics ---------- */
+
+// predicted, actual -> a calibration sample. error = predicted - actual.
+function cal(predicted, actual, extra = {}) {
+  return {
+    predictedFlat: predicted, actualFlat: actual,
+    brandId: 'uniqlo', dept: 'men', category: 'tshirt', size: 'M',
+    source: 'chart', date: '2026-08-06', ...extra,
+  };
+}
+
+test('error is signed: positive means we over-predicted the width', () => {
+  eq(errorOf(cal(54, 50)), 4);
+  eq(errorOf(cal(50, 54)), -4);
+});
+
+test('summarize computes bias and typical error by hand-checkable values', () => {
+  // errors: +2, -2, +4, -4  -> bias 0, mae 3, worst 4
+  const s = summarize([cal(52, 50), cal(48, 50), cal(54, 50), cal(46, 50)]);
+  eq(s.n, 4);
+  near(s.bias, 0, 1e-9, 'symmetric errors cancel');
+  near(s.mae, 3, 1e-9);
+  eq(s.worst, 4);
+});
+
+test('bias catches a systematic lean that mae alone hides', () => {
+  // every prediction 3 too wide
+  const s = summarize([cal(53, 50), cal(58, 55), cal(63, 60)]);
+  near(s.bias, 3, 1e-9, 'a fixable constant offset');
+  near(s.mae, 3, 1e-9);
+});
+
+test('quantile matches known positions', () => {
+  eq(quantile([1, 2, 3, 4, 5], 0.5), 3);
+  eq(quantile([1, 2, 3, 4], 0.5), 2.5, 'interpolates');
+  eq(quantile([1, 2, 3, 4, 5], 0), 1);
+  eq(quantile([1, 2, 3, 4, 5], 1), 5);
+});
+
+test('coverage reports the fraction inside a band', () => {
+  // errors 1, 1, 5, 5 against a band of 2 -> half inside
+  const s = [cal(51, 50), cal(51, 50), cal(55, 50), cal(55, 50)];
+  near(coverage(s, 2), 0.5, 1e-9);
+  near(coverage(s, 10), 1, 1e-9);
+  near(coverage(s, 0.5), 0, 1e-9);
+});
+
+test('bandForCoverage returns a width that actually achieves the target', () => {
+  // absolute errors 1,1,1,1,5
+  const s = [cal(51, 50), cal(51, 50), cal(51, 50), cal(51, 50), cal(55, 50)];
+  const band = bandForCoverage(s, 0.8);
+  // The property that matters is the coverage it delivers, not the exact
+  // interpolated number.
+  truthy(coverage(s, band) >= 0.8, 'the recommended band hits the target');
+  truthy(band < 5, 'without simply covering the worst case');
+});
+
+test('a wider target demands a wider band', () => {
+  const s = [cal(51, 50), cal(51, 50), cal(51, 50), cal(51, 50), cal(55, 50)];
+  truthy(bandForCoverage(s, 1) >= bandForCoverage(s, 0.8), 'monotonic in target');
+});
+
+test('a small sample refuses to draw a conclusion', () => {
+  const v = verdictOnBand([cal(51, 50), cal(52, 50)], 2);
+  eq(v.state, 'insufficient');
+  truthy(/too few/i.test(v.text));
+});
+
+test('an honest band is reported as defensible', () => {
+  const s = Array.from({ length: 12 }, () => cal(51, 50)); // every error 1 cm
+  const v = verdictOnBand(s, 2);
+  eq(v.state, 'ok');
+});
+
+test('a band narrower than real error is called out', () => {
+  const s = Array.from({ length: 12 }, () => cal(56, 50)); // every error 6 cm
+  const v = verdictOnBand(s, 2);
+  eq(v.state, 'too-tight');
+  truthy(/more precision than the model has/i.test(v.text));
+  near(v.needed, 6, 1e-9, 'and says what would be needed');
+});
+
+test('groupBy separates a bad brand from a good average', () => {
+  const rows = groupBy([
+    cal(51, 50, { brandId: 'uniqlo' }),
+    cal(51, 50, { brandId: 'uniqlo' }),
+    cal(58, 50, { brandId: 'zara' }),
+  ], x => x.brandId);
+  const uniqlo = rows.find(r => r.key === 'uniqlo');
+  const zara = rows.find(r => r.key === 'zara');
+  near(uniqlo.mae, 1, 1e-9);
+  near(zara.mae, 8, 1e-9);
+});
+
+test('empty input never throws', () => {
+  eq(summarize([]).n, 0);
+  eq(coverage([], 2), null);
+  eq(bandForCoverage([], 0.8), null);
+  eq(verdictOnBand([], 2).state, 'empty');
+});
+
+test('csv export has a header and one row per sample', () => {
+  const csv = toCsv([cal(52, 50), cal(48, 50)]);
+  const lines = csv.split('\n');
+  eq(lines.length, 3);
+  truthy(lines[0].startsWith('date,brand'), 'header');
+  truthy(lines[1].endsWith('2.00'), 'signed error in the row');
+});
+
+/* ---------- Catalog noise ---------- */
+
+test('an empty search shows only genuinely measured garments', () => {
+  const results = catalog.search('');
+  truthy(results.length > 0, 'not empty');
+  truthy(results.every(e => e.kind === 'measured' || e.source === 'user'),
+    'no generic chart entries unprompted');
+});
+
+test('typing a brand brings its chart entries back', () => {
+  const results = catalog.search('uniqlo');
+  truthy(results.some(e => e.kind === 'chart'), 'estimates available on request');
 });
 
 /* ---------- Storage shape ---------- */
