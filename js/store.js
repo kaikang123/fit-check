@@ -77,9 +77,33 @@ export function onSaveError(fn) {
   saveErrorHandler = fn;
 }
 
+// Anything that wants to know the data changed — the sync scheduler, mainly.
+const changeListeners = new Set();
+
+export function onChanged(fn) {
+  changeListeners.add(fn);
+  return () => changeListeners.delete(fn);
+}
+
+// Merging two devices needs to know which copy of a record is newer, and
+// which records were deliberately deleted rather than simply absent. Without
+// stamps a merge cannot tell an edit from a stale copy; without tombstones a
+// deletion on one device is undone by the other.
+export function touch(record) {
+  if (record) record.updatedAt = Date.now();
+  return record;
+}
+
+export function tombstone(container, id) {
+  container.deleted = container.deleted || {};
+  container.deleted[id] = Date.now();
+}
+
 export function save() {
   try {
+    state.updatedAt = Date.now();
     localStorage.setItem(KEY, JSON.stringify(state));
+    changeListeners.forEach(fn => fn());
     return true;
   } catch (e) {
     const quota = e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED';
@@ -100,6 +124,7 @@ export function addProfile(name, dept, preference = 'regular') {
     refs: [], activeRefs: { tops: null, bottoms: null },
     closet: [], history: [],
   };
+  touch(p);
   state.profiles.push(p);
   state.activeProfileId = p.id;
   save();
@@ -116,6 +141,8 @@ export function activeRef(profile, family) {
 export function addRef(profile, ref) {
   ref.id = uid();
   ref.family = CATEGORIES[ref.category].family;
+  touch(ref);
+  touch(profile);
   profile.refs.push(ref);
   if (!profile.activeRefs[ref.family]) profile.activeRefs[ref.family] = ref.id;
   save();
@@ -124,6 +151,8 @@ export function addRef(profile, ref) {
 
 export function removeRef(profile, id) {
   const ref = profile.refs.find(r => r.id === id);
+  tombstone(profile, id);
+  touch(profile);
   profile.refs = profile.refs.filter(r => r.id !== id);
   if (ref && profile.activeRefs[ref.family] === id) {
     profile.activeRefs[ref.family] = profile.refs.find(r => r.family === ref.family)?.id || null;
@@ -134,6 +163,7 @@ export function removeRef(profile, id) {
 export function addClosetLog(profile, log) {
   log.id = uid();
   log.date = new Date().toISOString().slice(0, 10);
+  touch(log);
   profile.closet.unshift(log);
   save();
   return log;
@@ -143,6 +173,7 @@ export function addHistory(profile, entry) {
   entry.id = uid();
   entry.date = new Date().toISOString().slice(0, 10);
   entry.outcome = null;
+  touch(entry);
   profile.history.unshift(entry);
   if (profile.history.length > 50) profile.history.length = 50;
   save();
@@ -217,6 +248,7 @@ export function addUserGarment({ brandId, name, dept, category, size, main, seco
   if (existing) {
     // Same product, another size — extend it rather than making a duplicate.
     existing.sizes[size] = { main, secondary: secondary ?? null };
+    touch(existing);
     save();
     return existing;
   }
@@ -230,12 +262,14 @@ export function addUserGarment({ brandId, name, dept, category, size, main, seco
     sizes: { [size]: { main, secondary: secondary ?? null } },
     added: new Date().toISOString().slice(0, 10),
   };
+  touch(entry);
   state.userGarments.push(entry);
   save();
   return entry;
 }
 
 export function removeUserGarment(id) {
+  tombstone(state, id);
   state.userGarments = state.userGarments.filter(g => g.id !== id);
   save();
 }

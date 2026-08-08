@@ -20,6 +20,7 @@ import {
 } from './engine.js';
 import * as catalog from './catalog.js';
 import * as store from './store.js';
+import { mergeState, mergeUserGarments, mergeCalibration } from './syncmerge.js';
 import {
   summarize, quantile, coverage, bandForCoverage, verdictOnBand, groupBy, errorOf, toCsv,
 } from './calibmath.js';
@@ -1039,6 +1040,121 @@ test('removing a single size leaves the rest, removing the last drops the entry'
   store.removeUserGarmentSize(g.id, 'L');
   eq(store.state.userGarments.length, 0, 'empty entry cleans itself up');
   resetUserGarments();
+});
+
+/* ---------- Two-device sync merge ---------- */
+
+function device(profileOverrides = {}, stateOverrides = {}) {
+  return {
+    profiles: [{
+      id: 'p1', name: 'Kai', dept: 'men', preference: 'regular',
+      refs: [], closet: [], history: [],
+      activeRefs: { tops: null, bottoms: null },
+      updatedAt: 1000, ...profileOverrides,
+    }],
+    activeProfileId: 'p1',
+    settings: { units: 'cm' },
+    barcodes: {},
+    userGarments: [],
+    updatedAt: 1000,
+    ...stateOverrides,
+  };
+}
+
+test('logs made on two devices both survive the merge', () => {
+  const phone = device({ closet: [{ id: 'a', feel: -1, updatedAt: 2000 }] });
+  const pc = device({ closet: [{ id: 'b', feel: 1, updatedAt: 2000 }] });
+  const merged = mergeState(phone, pc);
+  const ids = merged.profiles[0].closet.map(c => c.id).sort();
+  eq(ids.join(','), 'a,b', 'neither device overwrites the other');
+});
+
+test('merging is symmetric, so either device gets the same answer', () => {
+  const phone = device({ closet: [{ id: 'a', updatedAt: 2000 }] });
+  const pc = device({ closet: [{ id: 'b', updatedAt: 3000 }] });
+  const a = mergeState(phone, pc).profiles[0].closet.map(c => c.id).sort().join(',');
+  const b = mergeState(pc, phone).profiles[0].closet.map(c => c.id).sort().join(',');
+  eq(a, b);
+});
+
+test('syncing twice changes nothing the second time', () => {
+  const phone = device({ closet: [{ id: 'a', updatedAt: 2000 }] });
+  const pc = device({ closet: [{ id: 'b', updatedAt: 2000 }] });
+  const once = mergeState(phone, pc);
+  const twice = mergeState(once, pc);
+  eq(twice.profiles[0].closet.length, once.profiles[0].closet.length, 'converged');
+});
+
+test('the newer edit of the same record wins', () => {
+  const phone = device({ refs: [{ id: 'r1', main: 53, updatedAt: 5000 }] });
+  const pc = device({ refs: [{ id: 'r1', main: 60, updatedAt: 1000 }] });
+  eq(mergeState(phone, pc).profiles[0].refs[0].main, 53, 'later measurement kept');
+  eq(mergeState(pc, phone).profiles[0].refs[0].main, 53, 'regardless of merge order');
+});
+
+test('a deleted record does not come back from the other device', () => {
+  const phone = device({ refs: [], deleted: { r1: 9000 } });
+  const pc = device({ refs: [{ id: 'r1', main: 53, updatedAt: 1000 }] });
+  eq(mergeState(phone, pc).profiles[0].refs.length, 0, 'tombstone respected');
+  eq(mergeState(pc, phone).profiles[0].refs.length, 0, 'in both directions');
+});
+
+test('a preference changed on one device wins by recency', () => {
+  const phone = device({ preference: 'baggy', updatedAt: 5000 });
+  const pc = device({ preference: 'tight', updatedAt: 1000 });
+  eq(mergeState(phone, pc).profiles[0].preference, 'baggy');
+});
+
+test('a profile that exists on only one device is carried over', () => {
+  const phone = device();
+  const pc = device();
+  pc.profiles.push({
+    id: 'p2', name: 'Sam', dept: 'women', refs: [], closet: [], history: [], updatedAt: 4000,
+  });
+  eq(mergeState(phone, pc).profiles.length, 2);
+});
+
+test('measured garments merge per size, not per entry', () => {
+  const phone = [{ id: 'g1', name: 'Tee', sizes: { M: { main: 52 } }, updatedAt: 2000 }];
+  const pc = [{ id: 'g1', name: 'Tee', sizes: { L: { main: 56 } }, updatedAt: 3000 }];
+  const merged = mergeUserGarments(phone, pc);
+  eq(merged.length, 1, 'one product');
+  eq(Object.keys(merged[0].sizes).sort().join(','), 'L,M', 'both sizes kept');
+});
+
+test('barcode links from either device are kept', () => {
+  const phone = device({}, { barcodes: { '111': 'gildan-g500' } });
+  const pc = device({}, { barcodes: { '222': 'uniqlo-airism-crew' } });
+  const merged = mergeState(phone, pc);
+  eq(Object.keys(merged.barcodes).sort().join(','), '111,222');
+});
+
+test('calibration samples union rather than replace', () => {
+  const phone = [{ id: 'c1', date: '2026-08-06', predictedFlat: 50, actualFlat: 53 }];
+  const pc = [{ id: 'c2', date: '2026-08-05', predictedFlat: 54, actualFlat: 52 }];
+  const merged = mergeCalibration(phone, pc);
+  eq(merged.length, 2, 'measurements from a shop join those from a desk');
+  eq(merged[0].id, 'c1', 'newest first');
+});
+
+test('the same calibration sample is not duplicated by repeated syncs', () => {
+  const s = [{ id: 'c1', date: '2026-08-06' }];
+  eq(mergeCalibration(s, s).length, 1);
+});
+
+test('merging against nothing is a no-op', () => {
+  const phone = device({ closet: [{ id: 'a', updatedAt: 1 }] });
+  eq(mergeState(phone, null).profiles[0].closet.length, 1, 'first sync of a fresh key');
+  eq(mergeState(null, phone).profiles[0].closet.length, 1);
+});
+
+test('history stays capped and newest-first after merging', () => {
+  const mk = (id, date) => ({ id, date, band: 'fit' });
+  const phone = device({ history: Array.from({ length: 60 }, (_, i) => mk('a' + i, '2026-01-01')) });
+  const pc = device({ history: Array.from({ length: 60 }, (_, i) => mk('b' + i, '2026-06-01')) });
+  const merged = mergeState(phone, pc).profiles[0].history;
+  truthy(merged.length <= 100, 'capped');
+  eq(merged[0].date, '2026-06-01', 'newest first');
 });
 
 /* ---------- Backup round-trip ---------- */

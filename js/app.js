@@ -11,6 +11,7 @@ import * as catalog from './catalog.js';
 import { renderBodyScan, teardownBodyScan, saveScan } from './body.js';
 import { renderTagScan, teardownTag } from './tag.js';
 import { cameraUnavailableReason } from './env.js';
+import * as sync from './sync.js';
 
 const screen = document.getElementById('screen');
 let tab = 'check';
@@ -91,6 +92,16 @@ if (cameraUnavailableReason() === 'insecure') {
 if ('serviceWorker' in navigator && window.isSecureContext) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').catch(() => { /* offline is optional */ });
+  });
+}
+
+// Push local edits up shortly after they happen, and pull on returning to the
+// app. Coalesced, so a burst of taps in a shop is one round trip.
+if (sync.isConfigured()) {
+  sync.startAutoSync(store);
+  store.onChanged(() => sync.scheduleSync(store));
+  sync.onStatus(() => {
+    if (tab === 'profile') render();
   });
 }
 
@@ -751,6 +762,97 @@ function fitModelHtml(p) {
     </div>`;
 }
 
+// Sync is off unless deliberately switched on, and the screen says plainly
+// what turning it on changes — this is the one feature that moves body
+// measurements off the device.
+function syncSectionHtml() {
+  const cfg = sync.readConfig();
+  const st = sync.getStatus();
+
+  if (!sync.isConfigured()) {
+    return `
+      <p class="hint">Off. Everything stays on this device.</p>
+      <p class="hint">Turning sync on copies your profiles, measurements and photos to a
+        database you own, so your phone and computer stay in step. Setting it up takes one
+        free Supabase project — see <code>SYNC-SETUP.md</code> in the repo for the two values
+        to paste below and the SQL to run.</p>
+      <label class="field">Supabase project URL
+        <input id="sy-url" type="url" placeholder="https://xxxx.supabase.co" value="${esc(cfg?.url || '')}">
+      </label>
+      <label class="field">Supabase anon key
+        <input id="sy-key" type="text" placeholder="eyJhbGci..." value="${esc(cfg?.anonKey || '')}">
+      </label>
+      <label class="field">Sync key
+        <input id="sy-sync" type="text" placeholder="Generate on your first device, paste on the second"
+               value="${esc(cfg?.syncKey || '')}">
+      </label>
+      <div class="row">
+        <button id="sy-gen" class="btn">Generate a sync key</button>
+        <button id="sy-save" class="btn btn-primary">Turn on sync</button>
+      </div>
+      <p class="hint">The sync key is the only thing protecting your data — treat it like a
+        password, and enter the same one on every device you want kept in step.</p>`;
+  }
+
+  const label = {
+    [sync.SYNC_STATE.IDLE]: 'On',
+    [sync.SYNC_STATE.SYNCING]: 'Syncing…',
+    [sync.SYNC_STATE.OFFLINE]: 'Offline — will catch up',
+    [sync.SYNC_STATE.ERROR]: 'Error',
+    [sync.SYNC_STATE.OFF]: 'On',
+  }[st.state] || 'On';
+
+  const chip = st.state === sync.SYNC_STATE.ERROR ? 'low'
+    : st.state === sync.SYNC_STATE.OFFLINE ? 'medium' : 'high';
+
+  return `
+    <div class="list-item">
+      <div class="grow">Sync <span class="sub">${cfg.lastSynced
+        ? `last synced ${new Date(cfg.lastSynced).toLocaleString()}`
+        : 'not synced yet'}</span></div>
+      <span class="chip chip-${chip}">${label}</span>
+    </div>
+    ${st.message ? `<p class="hint" style="color:var(--red)">${esc(st.message)}</p>` : ''}
+    <p class="hint">Sync key: <code>${esc(cfg.syncKey)}</code> — enter this on another device to pair it.</p>
+    <div class="row">
+      <button id="sy-now" class="btn btn-primary">Sync now</button>
+      <button id="sy-off" class="btn btn-danger">Turn off sync</button>
+    </div>`;
+}
+
+function wireSync(el) {
+  el.querySelector('#sy-gen')?.addEventListener('click', () => {
+    el.querySelector('#sy-sync').value = sync.generateSyncKey();
+  });
+
+  el.querySelector('#sy-save')?.addEventListener('click', async () => {
+    const url = el.querySelector('#sy-url').value.trim();
+    const anonKey = el.querySelector('#sy-key').value.trim();
+    const syncKey = sync.normalizeSyncKey(el.querySelector('#sy-sync').value);
+    if (!url || !anonKey || !syncKey) {
+      alert('All three fields are needed to turn sync on.');
+      return;
+    }
+    sync.writeConfig({ url, anonKey, syncKey });
+    const res = await sync.syncNow(store);
+    if (!res.ok && res.reason === 'error') {
+      alert(`Sync could not connect:\n\n${res.error}\n\nCheck the URL and key, and that the SQL from SYNC-SETUP.md has been run.`);
+    }
+    render();
+  });
+
+  el.querySelector('#sy-now')?.addEventListener('click', async () => {
+    await sync.syncNow(store);
+    render();
+  });
+
+  el.querySelector('#sy-off')?.addEventListener('click', () => {
+    if (!confirm('Turn off sync? Your data stays on this device, but the devices stop keeping each other up to date.')) return;
+    sync.writeConfig(null);
+    render();
+  });
+}
+
 function renderProfile(el, p) {
   el.innerHTML = `
     ${fitModelHtml(p)}
@@ -833,6 +935,9 @@ function renderProfile(el, p) {
             </div>`).join('')}`
         : `<p class="hint">None yet. Measure a garment from a photo and choose “Add to catalog” —
             it turns a one-off measurement into something every future check can use.</p>`}
+
+        <h3>Sync across devices</h3>
+        ${syncSectionHtml()}
 
         <h3>Backup</h3>
         <p class="hint">Everything lives on this device only — nothing is uploaded, and nothing syncs between
@@ -960,6 +1065,8 @@ function renderProfile(el, p) {
     };
     paint();
   };
+
+  wireSync(el);
 
   el.querySelectorAll('[data-delgarment]').forEach(btn => {
     btn.onclick = () => {
